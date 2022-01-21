@@ -1,0 +1,22 @@
+server:
+  port: 2223
+
+spring:
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      auto-offset-reset: earliest
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    streams:
+      application-id: available-cars-app
+      replication-factor: 1
+      auto-startup: true
+
+available-cars-app:
+  topic-name:
+    s3-car: s3_car_topic
+    car-request: car_request_topic
+    available-cars: available_cars_topic
