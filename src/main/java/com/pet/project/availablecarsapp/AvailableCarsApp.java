@@ -12,23 +12,11 @@ import org.springframework.kafka.config.TopicBuilder;
 @EnableKafkaStreams
 public class AvailableCarsApp {
 
-    @Value("${available-cars-app.topic-name.available-cars}")
+    @Value("${available-cars-app.topic-name.rented-cars}")
     private String topicName;
 
     public static void main(String[] args) {
         SpringApplication.run(AvailableCarsApp.class, args);
-    }
-
-    //TODO: удалить (добавлено для отладки)
-    @Bean
-    NewTopic createLastReqsTopic(){
-        return TopicBuilder
-                .name("last_requests_topic")
-                .partitions(1)
-                //TODO: если ставить больше 1 реплики, то топик не создается.
-                // Видимо потому что у нас создан только один бутстрап сервер
-                .replicas(1)
-                .build();
     }
 
     @Bean
