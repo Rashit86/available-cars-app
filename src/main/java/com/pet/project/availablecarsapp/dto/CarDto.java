@@ -6,8 +6,8 @@ import lombok.Setter;
 @Getter
 @Setter
 public class CarDto {
-    private String userName;
     private String carModel;
+    private String userName;
     private String requiredAction;
     private String time;
 }

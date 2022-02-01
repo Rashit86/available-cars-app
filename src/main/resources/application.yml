@@ -19,4 +19,5 @@ available-cars-app:
   topic-name:
     s3-car: s3_car_topic
     car-request: car_request_topic
+    user-exception: user_exception_topic
     rented-cars: rented_cars_topic
