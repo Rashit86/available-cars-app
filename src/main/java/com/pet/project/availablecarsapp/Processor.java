@@ -12,8 +12,6 @@ import org.apache.kafka.connect.json.JsonDeserializer;
 import org.apache.kafka.connect.json.JsonSerializer;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.kstream.*;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -43,9 +41,7 @@ public class Processor {
     public static final String TIME = "time";
     public static final String IS_RESERVED = "isReserved";
     public static final String RENTER_NAME = "renterName";
-    public static final String FOR_KAFKA = "for_kafka";
-
-    private static final Logger logger = LoggerFactory.getLogger(Processor.class);
+    public static final String MESSAGE = "message";
 
     @Autowired
     public void process(StreamsBuilder builder) {
@@ -80,7 +76,6 @@ public class Processor {
 
         KTable<String, JsonNode> joinedCars = carRequestTable.join(s3Cars.toTable(), s3RequestJoiner);
 
-        //дальше эту таблицу нужно сгруппировать и сложить хорошие штуки в один топик
         ObjectNode initialCarState = JsonNodeFactory.instance.objectNode();
 
         KTable<String, JsonNode> carsTable =
@@ -94,8 +89,12 @@ public class Processor {
                         );
 
         carsTable.toStream()
-                .filter(((key, value) -> value.get(FOR_KAFKA).asBoolean()))
+                .filter(((key, value) -> value.get(MESSAGE) == null))
                 .to(rentedCarsTopic, Produced.with(Serdes.String(), jsonSerde));
+
+        carsTable.toStream()
+                .filter(((key, value) -> value.get(MESSAGE) != null))
+                .to(userExceptionTopic, Produced.with(Serdes.String(), jsonSerde));
 
     }
 
@@ -117,22 +116,24 @@ public class Processor {
     private static JsonNode getCarState(JsonNode value, JsonNode aggregate) {
         ObjectNode carState = JsonNodeFactory.instance.objectNode();
 
+        //if the car hasn't renter
         if (aggregate.get(RENTER_NAME) == null || aggregate.get(RENTER_NAME).equals(NullNode.getInstance())) {
             carState.set(CAR_MODEL, value.get(CAR_MODEL));
             carState.set(RENTER_NAME, value.get(USER_NAME));
             carState.put(IS_RESERVED, value.get(REQUIRED_ACTION).asText().equals(RESERVE));
             carState.set(TIME, value.get(TIME));
-            carState.put(FOR_KAFKA, true);
         } else {
+            //if car's renter is user from this request
             if (value.get(USER_NAME).equals(aggregate.get(RENTER_NAME))) {
                 createCarState(value, aggregate, carState);
             } else {
+                //if the required car is not reserved
                 if (!aggregate.get(IS_RESERVED).asBoolean()) {
                     createCarState(value, aggregate, carState);
                 } else {
-                    logger.info("User ({}) tried to book car ({}) already reserved by another user ({})",
+                    String message = String.format("User (%s) tried to book car (%s) already reserved by another user (%s)",
                             value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
-                    copyAggregatedCar(aggregate, carState);
+                    addMsgToAggCar(aggregate, carState, message);
                 }
             }
         }
@@ -142,15 +143,15 @@ public class Processor {
     private static void createCarState(JsonNode value, JsonNode aggregate, ObjectNode carState) {
         if (aggregate.get(IS_RESERVED).asBoolean()) {
             if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
-                logger.info("User ({}) already reserved this car ({})",
+                String message = String.format("User (%s) already reserved this car (%s)",
                         value.get(USER_NAME), value.get(CAR_MODEL));
-                copyAggregatedCar(aggregate, carState);
+                addMsgToAggCar(aggregate, carState, message);
             } else {
                 carState.set(CAR_MODEL, value.get(CAR_MODEL));
                 carState.set(RENTER_NAME, null);
                 carState.put(IS_RESERVED, false);
                 carState.set(TIME, value.get(TIME));
-                carState.put(FOR_KAFKA, true);
+//                carState.put(MESSAGE, true);
             }
         } else {
             if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
@@ -158,20 +159,20 @@ public class Processor {
                 carState.set(RENTER_NAME, value.get(USER_NAME));
                 carState.put(IS_RESERVED, true);
                 carState.set(TIME, value.get(TIME));
-                carState.put(FOR_KAFKA, true);
+//                carState.put(MESSAGE, true);
             } else {
-                logger.info("User ({}) already canceled the reservation if this car ({})",
+                String message = String.format("User (%s) already canceled the reservation if this car (%s)",
                         value.get(USER_NAME), value.get(CAR_MODEL));
-                copyAggregatedCar(aggregate, carState);
+                addMsgToAggCar(aggregate, carState, message);
             }
         }
     }
 
-    private static void copyAggregatedCar(JsonNode aggregate, ObjectNode carState) {
+    private static void addMsgToAggCar(JsonNode aggregate, ObjectNode carState, String message) {
         carState.set(CAR_MODEL, aggregate.get(CAR_MODEL));
         carState.set(RENTER_NAME, aggregate.get(RENTER_NAME));
         carState.set(IS_RESERVED, aggregate.get(IS_RESERVED));
         carState.set(TIME, aggregate.get(TIME));
-        carState.put(FOR_KAFKA, false);
+        carState.put(MESSAGE, message);
     }
 }
