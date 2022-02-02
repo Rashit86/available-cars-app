@@ -2,7 +2,6 @@ package com.pet.project.availablecarsapp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.JsonNodeFactory;
-import com.fasterxml.jackson.databind.node.NullNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.kafka.common.serialization.Deserializer;
 import org.apache.kafka.common.serialization.Serde;
@@ -116,55 +115,37 @@ public class Processor {
     private static JsonNode getCarState(JsonNode value, JsonNode aggregate) {
         ObjectNode carState = JsonNodeFactory.instance.objectNode();
 
-        //if the car hasn't renter
-        if (aggregate.get(RENTER_NAME) == null || aggregate.get(RENTER_NAME).equals(NullNode.getInstance())) {
+        if (aggregate.get(IS_RESERVED) != null && !aggregate.get(IS_RESERVED).asBoolean() && value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
             carState.set(CAR_MODEL, value.get(CAR_MODEL));
             carState.set(RENTER_NAME, value.get(USER_NAME));
-            carState.put(IS_RESERVED, value.get(REQUIRED_ACTION).asText().equals(RESERVE));
+            carState.put(IS_RESERVED, true);
             carState.set(TIME, value.get(TIME));
+        } else if (aggregate.get(IS_RESERVED) == null || (!aggregate.get(IS_RESERVED).asBoolean() && value.get(REQUIRED_ACTION).asText().equals(CANCEL_RESERVATION))) {
+            String message = String.format("User (%s) tried to cancel reservation of not reserved car (%s)",
+                    value.get(USER_NAME), value.get(CAR_MODEL));
+            addMsgToAggCar(aggregate, carState, message);
         } else {
-            //if car's renter is user from this request
             if (value.get(USER_NAME).equals(aggregate.get(RENTER_NAME))) {
                 createCarState(value, aggregate, carState);
             } else {
-                //if the required car is not reserved
-                if (!aggregate.get(IS_RESERVED).asBoolean()) {
-                    createCarState(value, aggregate, carState);
-                } else {
-                    String message = String.format("User (%s) tried to book car (%s) already reserved by another user (%s)",
-                            value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
-                    addMsgToAggCar(aggregate, carState, message);
-                }
+                String message = String.format("User (%s) tried to reserve car (%s) already reserved by another user (%s)",
+                        value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
+                addMsgToAggCar(aggregate, carState, message);
             }
         }
         return carState;
     }
 
     private static void createCarState(JsonNode value, JsonNode aggregate, ObjectNode carState) {
-        if (aggregate.get(IS_RESERVED).asBoolean()) {
-            if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
-                String message = String.format("User (%s) already reserved this car (%s)",
-                        value.get(USER_NAME), value.get(CAR_MODEL));
-                addMsgToAggCar(aggregate, carState, message);
-            } else {
-                carState.set(CAR_MODEL, value.get(CAR_MODEL));
-                carState.set(RENTER_NAME, null);
-                carState.put(IS_RESERVED, false);
-                carState.set(TIME, value.get(TIME));
-//                carState.put(MESSAGE, true);
-            }
+        if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
+            String message = String.format("User (%s) already reserved this car (%s)",
+                    value.get(USER_NAME), value.get(CAR_MODEL));
+            addMsgToAggCar(aggregate, carState, message);
         } else {
-            if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
-                carState.set(CAR_MODEL, value.get(CAR_MODEL));
-                carState.set(RENTER_NAME, value.get(USER_NAME));
-                carState.put(IS_RESERVED, true);
-                carState.set(TIME, value.get(TIME));
-//                carState.put(MESSAGE, true);
-            } else {
-                String message = String.format("User (%s) already canceled the reservation if this car (%s)",
-                        value.get(USER_NAME), value.get(CAR_MODEL));
-                addMsgToAggCar(aggregate, carState, message);
-            }
+            carState.set(CAR_MODEL, value.get(CAR_MODEL));
+            carState.set(RENTER_NAME, null);
+            carState.put(IS_RESERVED, false);
+            carState.set(TIME, value.get(TIME));
         }
     }
 
