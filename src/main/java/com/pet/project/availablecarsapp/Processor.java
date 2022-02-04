@@ -15,7 +15,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 @Component
 public class Processor {
@@ -26,18 +27,21 @@ public class Processor {
     @Value("${available-cars-app.topic-name.car-request}")
     private String carReqTopic;
 
-    @Value("${available-cars-app.topic-name.user-exception}")
-    private String userExceptionTopic;
+    @Value("${available-cars-app.topic-name.user-exceptions}")
+    private String userExceptionsTopic;
 
     @Value("${available-cars-app.topic-name.rented-cars}")
     private String rentedCarsTopic;
 
+    private static final LocalDateTime initDateTime = LocalDateTime.of(1970, 1, 1, 0, 0, 0);
+    private static final String DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER = "yyyy-MM-dd'T'HH:mm:ss";
+    private static final DateTimeFormatter DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER_FORMATTER = DateTimeFormatter.ofPattern(DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER);
+
     public static final String REQUIRED_ACTION = "requiredAction";
     public static final String RESERVE = "RESERVE";
-    public static final String CANCEL_RESERVATION = "CANCEL_RESERVATION";
     public static final String USER_NAME = "userName";
     public static final String CAR_MODEL = "carModel";
-    public static final String TIME = "time";
+    public static final String DATE_TIME = "dateTime";
     public static final String IS_RESERVED = "isReserved";
     public static final String RENTER_NAME = "renterName";
     public static final String MESSAGE = "message";
@@ -53,7 +57,7 @@ public class Processor {
 
         // create the initial json object for car requests
         ObjectNode initialCarRequest = JsonNodeFactory.instance.objectNode();
-        initialCarRequest.put(TIME, Instant.ofEpochMilli(0L).toString());
+        initialCarRequest.put(DATE_TIME, initDateTime.format(DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER_FORMATTER));
 
         KTable<String, JsonNode> carRequestTable =
                 carRequests
@@ -67,7 +71,7 @@ public class Processor {
         ValueJoiner<JsonNode, JsonNode, JsonNode> s3RequestJoiner = (carRequest, s3Car) -> {
             ObjectNode joinedRequest = JsonNodeFactory.instance.objectNode();
             joinedRequest.set(CAR_MODEL, carRequest.get(CAR_MODEL));
-            joinedRequest.set(TIME, carRequest.get(TIME));
+            joinedRequest.set(DATE_TIME, carRequest.get(DATE_TIME));
             joinedRequest.set(USER_NAME, carRequest.get(USER_NAME));
             joinedRequest.set(REQUIRED_ACTION, carRequest.get(REQUIRED_ACTION));
             return joinedRequest;
@@ -93,7 +97,12 @@ public class Processor {
 
         carsTable.toStream()
                 .filter(((key, value) -> value.get(MESSAGE) != null))
-                .to(userExceptionTopic, Produced.with(Serdes.String(), jsonSerde));
+                .mapValues(value -> {
+                    ObjectNode objectNode = JsonNodeFactory.instance.objectNode();
+                    objectNode.set(MESSAGE, value.get(MESSAGE));
+                    return (JsonNode) objectNode;
+                })
+                .to(userExceptionsTopic, Produced.with(Serdes.String(), jsonSerde));
 
     }
 
@@ -102,12 +111,11 @@ public class Processor {
         lastRequest.set(USER_NAME, value.get(USER_NAME));
         lastRequest.set(CAR_MODEL, value.get(CAR_MODEL));
 
-        Long valueEpoch = Instant.parse(value.get(TIME).asText()).toEpochMilli();
-        long aggregateEpoch = Instant.parse(aggregate.get(TIME).asText()).toEpochMilli();
-        Instant lastRequestInstant = Instant.ofEpochMilli(Math.max(valueEpoch, aggregateEpoch));
-        lastRequest.put(TIME, lastRequestInstant.toString());
+        LocalDateTime valueDateTime = LocalDateTime.parse(value.get(DATE_TIME).asText(), DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER_FORMATTER);
+        LocalDateTime aggregateDateTime = LocalDateTime.parse(aggregate.get(DATE_TIME).asText(), DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER_FORMATTER);
+        lastRequest.set(DATE_TIME, valueDateTime.isAfter(aggregateDateTime) ? value.get(DATE_TIME) : aggregate.get(DATE_TIME));
         lastRequest.set(REQUIRED_ACTION,
-                valueEpoch.compareTo(aggregateEpoch) < 0 ? aggregate.get(REQUIRED_ACTION) : value.get(REQUIRED_ACTION));
+                valueDateTime.isAfter(aggregateDateTime) ? value.get(REQUIRED_ACTION) : aggregate.get(REQUIRED_ACTION));
 
         return lastRequest;
     }
@@ -115,45 +123,50 @@ public class Processor {
     private static JsonNode getCarState(JsonNode value, JsonNode aggregate) {
         ObjectNode carState = JsonNodeFactory.instance.objectNode();
 
-        if (aggregate.get(IS_RESERVED) != null && !aggregate.get(IS_RESERVED).asBoolean() && value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
-            carState.set(CAR_MODEL, value.get(CAR_MODEL));
-            carState.set(RENTER_NAME, value.get(USER_NAME));
-            carState.put(IS_RESERVED, true);
-            carState.set(TIME, value.get(TIME));
-        } else if (aggregate.get(IS_RESERVED) == null || (!aggregate.get(IS_RESERVED).asBoolean() && value.get(REQUIRED_ACTION).asText().equals(CANCEL_RESERVATION))) {
-            String message = String.format("User (%s) tried to cancel reservation of not reserved car (%s)",
-                    value.get(USER_NAME), value.get(CAR_MODEL));
-            addMsgToAggCar(aggregate, carState, message);
-        } else {
-            if (value.get(USER_NAME).equals(aggregate.get(RENTER_NAME))) {
-                createCarState(value, aggregate, carState);
+        if (aggregate.get(IS_RESERVED) == null || (aggregate.get(IS_RESERVED) != null && !aggregate.get(IS_RESERVED).asBoolean())) {
+            if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
+                carState.set(CAR_MODEL, value.get(CAR_MODEL));
+                carState.set(RENTER_NAME, value.get(USER_NAME));
+                carState.put(IS_RESERVED, true);
+                carState.set(DATE_TIME, value.get(DATE_TIME));
             } else {
-                String message = String.format("User (%s) tried to reserve car (%s) already reserved by another user (%s)",
-                        value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
+                String message = String.format("User %s tried to cancel reservation of not reserved car %s",
+                        value.get(USER_NAME), value.get(CAR_MODEL));
                 addMsgToAggCar(aggregate, carState, message);
             }
-        }
-        return carState;
-    }
-
-    private static void createCarState(JsonNode value, JsonNode aggregate, ObjectNode carState) {
-        if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
-            String message = String.format("User (%s) already reserved this car (%s)",
-                    value.get(USER_NAME), value.get(CAR_MODEL));
-            addMsgToAggCar(aggregate, carState, message);
         } else {
-            carState.set(CAR_MODEL, value.get(CAR_MODEL));
-            carState.set(RENTER_NAME, null);
-            carState.put(IS_RESERVED, false);
-            carState.set(TIME, value.get(TIME));
+            if (value.get(REQUIRED_ACTION).asText().equals(RESERVE)) {
+                if (value.get(USER_NAME).equals(aggregate.get(RENTER_NAME))) {
+                    String message = String.format("User %s already reserved this car %s",
+                            value.get(USER_NAME), value.get(CAR_MODEL));
+                    addMsgToAggCar(aggregate, carState, message);
+                } else {
+                    String message = String.format("User %s tried to reserve car %s already reserved by another user %s",
+                            value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
+                    addMsgToAggCar(aggregate, carState, message);
+                }
+            } else {
+                if (value.get(USER_NAME).equals(aggregate.get(RENTER_NAME))) {
+                    carState.set(CAR_MODEL, value.get(CAR_MODEL));
+                    carState.set(RENTER_NAME, null);
+                    carState.put(IS_RESERVED, false);
+                    carState.set(DATE_TIME, value.get(DATE_TIME));
+                } else {
+                    String message = String.format("User %s tried to cancel car %s reservation already reserved by another user %s",
+                            value.get(USER_NAME), value.get(CAR_MODEL), aggregate.get(RENTER_NAME));
+                    addMsgToAggCar(aggregate, carState, message);
+                }
+            }
         }
+
+        return carState;
     }
 
     private static void addMsgToAggCar(JsonNode aggregate, ObjectNode carState, String message) {
         carState.set(CAR_MODEL, aggregate.get(CAR_MODEL));
         carState.set(RENTER_NAME, aggregate.get(RENTER_NAME));
         carState.set(IS_RESERVED, aggregate.get(IS_RESERVED));
-        carState.set(TIME, aggregate.get(TIME));
+        carState.set(DATE_TIME, aggregate.get(DATE_TIME));
         carState.put(MESSAGE, message);
     }
 }

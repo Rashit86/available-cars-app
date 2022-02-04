@@ -15,33 +15,29 @@ public class AvailableCarsApp {
     @Value("${available-cars-app.topic-name.rented-cars}")
     private String rentedCarsTopic;
 
-    @Value("${available-cars-app.topic-name.user-exception}")
-    private String userExceptionTopic;
+    @Value("${available-cars-app.topic-name.user-exceptions}")
+    private String userExceptionsTopic;
 
     public static void main(String[] args) {
         SpringApplication.run(AvailableCarsApp.class, args);
     }
 
     @Bean
-    NewTopic createRentedCarsTopic(){
+    NewTopic createRentedCarsTopic() {
         return TopicBuilder
                 .name(rentedCarsTopic)
                 .partitions(1)
-                //TODO: если ставить больше 1 реплики, то топик не создается.
-                // Видимо потому что у нас создан только один бутстрап сервер
                 .replicas(1)
                 .build();
     }
 
     @Bean
-    NewTopic createUserExceptionTopic(){
+    NewTopic createUserExceptionsTopic() {
         return TopicBuilder
-                .name(userExceptionTopic)
+                .name(userExceptionsTopic)
                 .partitions(1)
                 .replicas(1)
                 .build();
     }
-
-
 }
 
