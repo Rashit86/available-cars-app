@@ -6,6 +6,11 @@ spring:
     producer:
       key-serializer: org.apache.kafka.common.serialization.StringSerializer
       value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      properties:
+        linger_ms: 1
+        enable_idempotence: true
     consumer:
       auto-offset-reset: earliest
       key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
@@ -17,6 +22,7 @@ spring:
       properties:
         processing:
           guarantee: exactly_once
+    bootstrap-servers: localhost:9092
 
 available-cars-app:
   topic-name:

@@ -100,6 +100,7 @@ public class Processor {
                 .mapValues(value -> {
                     ObjectNode objectNode = JsonNodeFactory.instance.objectNode();
                     objectNode.set(MESSAGE, value.get(MESSAGE));
+                    objectNode.set(DATE_TIME, value.get(DATE_TIME));
                     return (JsonNode) objectNode;
                 })
                 .to(userExceptionsTopic, Produced.with(Serdes.String(), jsonSerde));
