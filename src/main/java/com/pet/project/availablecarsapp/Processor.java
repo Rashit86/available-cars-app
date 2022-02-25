@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -164,10 +165,13 @@ public class Processor {
     }
 
     private static void addMsgToAggCar(JsonNode aggregate, ObjectNode carState, String message) {
+        ObjectNode dateTimeNow = JsonNodeFactory.instance.objectNode();
+        dateTimeNow.put(DATE_TIME, LocalDateTime.now(Clock.systemUTC()).format(DATE_TIME_PATTERN_ISO_WITH_TIME_DELIMITER_FORMATTER));
+
         carState.set(CAR_MODEL, aggregate.get(CAR_MODEL));
         carState.set(RENTER_NAME, aggregate.get(RENTER_NAME));
         carState.set(IS_RESERVED, aggregate.get(IS_RESERVED));
-        carState.set(DATE_TIME, aggregate.get(DATE_TIME));
+        carState.set(DATE_TIME, aggregate.get(DATE_TIME) != null ? aggregate.get(DATE_TIME) : dateTimeNow.get(DATE_TIME));
         carState.put(MESSAGE, message);
     }
 }
